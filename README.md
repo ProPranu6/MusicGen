@@ -4,4 +4,4 @@ dataset_info : The following Drive Link contains the Lakh Pianoroll Dataset (LPD
 
 MusicGen-Datasets : https://drive.google.com/drive/folders/1zI3TlrzxGUndemSmiagPtTUAmJ23MOR2?usp=sharing
 
-[](https://github.com/ProPranu6/MusicGen/blob/spotlight/ML%20Project%20Initial%20Check-in%20Presentation.pdf)
+[(See it here:)](https://github.com/ProPranu6/MusicGen/blob/spotlight/ML%20Project%20Initial%20Check-in%20Presentation.pdf)
