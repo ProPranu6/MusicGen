@@ -11,16 +11,6 @@ MusicGen-Datasets : https://drive.google.com/drive/folders/1zI3TlrzxGUndemSmiagP
 </object>
 
 
----
-layout: single
-title: "Curriculum Vitae"
-sitemap: false
-permalink: /Curriculum/
-author_profile: TRUE
-header:
-  image: assets/images/banner.jpg
----
-
-<embed src="https://belovanna.github.io/assets/download/sample.pdf" type="application/pdf" />
+<embed src="https://github.com/ProPranu6/MusicGen/blob/spotlight/ML%20Project%20Initial%20Check-in%20Presentation.pdf" type="application/pdf" />
 
 
