@@ -93,12 +93,10 @@ def transformer_encoder_decoder(music_dim=PITCHES+len(TIME_VOCAB), instruments=I
 
     X = TimeDistributed(note_to_vec)(Xinp)
     X = TransformerEncoder(intermediate_dim=400, num_heads=8)(X)
-    X = Dropout(0.5)(X)
     X = TransformerEncoder(intermediate_dim=400, num_heads=8)(X)
 
     Y = TimeDistributed(note_to_vec)(Xpromptinp)
     Y = TransformerDecoder(intermediate_dim=400, num_heads=8)(Y)
-    Y = Dropout(0.5)(Y)
     Y = TransformerDecoder(intermediate_dim=400, num_heads=8)(Y, X) 
     Y = TransformerDecoder(intermediate_dim=400, num_heads=8)(Y) 
 
@@ -107,7 +105,7 @@ def transformer_encoder_decoder(music_dim=PITCHES+len(TIME_VOCAB), instruments=I
         Out += [TimeDistributed(Dense(music_dim), name=f'instrument_{instrument+1}')(Y)]
     
 
-    losses = [tf.keras.losses.SparseCategoricalCrossentropy(ignore_class=music_dim, from_logits=True)]*instruments
+    losses = [tf.keras.losses.SparseCategoricalCrossentropy(ignore_class=music_dim-1, from_logits=True)]*instruments
     if instruments == 1:
         Out = Out[0]
         losses = losses[0]
