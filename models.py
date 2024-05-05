@@ -20,9 +20,12 @@ from processing.monophony import PITCHES, INSTRUMENTS, TIME_VOCAB
 
 
 def recurrent_encoder_decoder(pitches=PITCHES, instruments=INSTRUMENTS, time_vocabs=len(TIME_VOCAB)):
+    """
+    (Multi-instrument-nochord) -> (Embedding of size 30) -> (Contextual Average embedding) -> (Encoder-Decoder) -> (Multi-instrument softmax outputs)
+    """
     Xinp = Input((None, instruments))
     Xpromptinp = Input((None, instruments))
-    note_to_vec = Sequential([Embedding(pitches+instruments+time_vocabs, 30), 
+    note_to_vec = Sequential([Embedding(pitches+time_vocabs, 30), 
                               AveragePooling1D(INSTRUMENTS),
                               Flatten()
     ])
@@ -30,9 +33,6 @@ def recurrent_encoder_decoder(pitches=PITCHES, instruments=INSTRUMENTS, time_voc
     X = TimeDistributed(note_to_vec)(Xinp)
     X = Bidirectional(LSTM(256, return_sequences=True))(X)
     X = Bidirectional(LSTM(256, return_sequences=True))(X)
-   
-    
-
    
     _, *internal_state = LSTM(512, return_state=True)(X)
 
@@ -77,13 +77,60 @@ def recurrent(pitches=PITCHES, instruments=INSTRUMENTS, time_vocabs=len(TIME_VOC
     return model
 
 
-def transformer_encoder_decoder(pitches=PITCHES, instruments=INSTRUMENTS, time_vocabs=len(TIME_VOCAB), encoder_len=100, decoder_len=200):
+def transformer_encoder_decoder(music_dim=PITCHES+len(TIME_VOCAB), instruments=INSTRUMENTS):
 
-    Xinp = Input((encoder_len, instruments))
-    Xpromptinp = Input((decoder_len, instruments))
+    """
+    (Multi-instrument-nochord) -> (Embedding of size 100) -> (Contextual Average embedding) -> (Encoder-Decoder Transformer) -> (Multi-instrument softmax outputs)
+    """
 
-    note_to_vec = Sequential([Embedding(pitches+instruments+time_vocabs, 100), 
+    Xinp = Input((None, instruments))
+    Xpromptinp = Input((None, instruments))
+
+    note_to_vec = Sequential([Embedding(music_dim, 100), 
                               AveragePooling1D(INSTRUMENTS),
+                              Flatten()
+    ], name='note_to_vec')
+
+    X = TimeDistributed(note_to_vec)(Xinp)
+    X = TransformerEncoder(intermediate_dim=400, num_heads=8)(X)
+    X = Dropout(0.5)(X)
+    X = TransformerEncoder(intermediate_dim=400, num_heads=8)(X)
+
+    Y = TimeDistributed(note_to_vec)(Xpromptinp)
+    Y = TransformerDecoder(intermediate_dim=400, num_heads=8)(Y)
+    Y = Dropout(0.5)(Y)
+    Y = TransformerDecoder(intermediate_dim=400, num_heads=8)(Y, X) 
+    Y = TransformerDecoder(intermediate_dim=400, num_heads=8)(Y) 
+
+    Out = []
+    for instrument in range(instruments):
+        Out += [TimeDistributed(Dense(music_dim), name=f'instrument_{instrument+1}')(Y)]
+    
+
+    losses = [tf.keras.losses.SparseCategoricalCrossentropy(ignore_class=music_dim, from_logits=True)]*instruments
+    if instruments == 1:
+        Out = Out[0]
+        losses = losses[0]
+    
+    In = [Xinp, Xpromptinp]
+    model = Model(In, Out)
+    model.compile(Adam(1e-3), loss=losses, metrics=['accuracy'])
+    return model
+
+
+def transformer_cnn_encoder_decoder(pitches=PITCHES, instruments=INSTRUMENTS, time_vocabs=len(TIME_VOCAB)):
+    """
+    (Multi-instrument-nochord) -> (Embedding of size 30) -> (Contextual Convoluted[CNN] embedding) -> (Encoder-Decoder Transformer) -> (Multi-instrument softmax outputs)
+    """
+    assert instruments == 5, "can only be modeled for multi-instrument(5) music generation"
+
+    Xinp = Input((None, instruments))
+    Xpromptinp = Input((None, instruments))
+
+    note_to_vec = Sequential([Embedding(pitches+time_vocabs, 100),
+                              Conv1D(50, 2, padding='same'),    
+                              Conv1D(10, 2, padding='same'), 
+                              AveragePooling1D(instruments),
                               Flatten()
     ], name='note_to_vec')
 
@@ -110,8 +157,6 @@ def transformer_encoder_decoder(pitches=PITCHES, instruments=INSTRUMENTS, time_v
     model = Model(In, Out)
     model.compile(Adam(1e-3), loss=losses, metrics=['accuracy'])
     return model
-
-
 
 
 
