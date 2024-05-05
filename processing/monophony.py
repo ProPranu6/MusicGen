@@ -1,30 +1,31 @@
-import pypianoroll as ppr 
 import numpy as np
 import os
+import shutil
 from random import random
 from tqdm import tqdm
 import tensorflow as tf
-from tensorflow.keras.layers import Dense, LSTM, Flatten, Input, Bidirectional, TimeDistributed, Activation, Concatenate, Embedding, MaxPooling1D, CategoryEncoding, Conv1D, Dropout, AveragePooling1D
-from tensorflow.keras.utils import pad_sequences, timeseries_dataset_from_array, split_dataset, to_categorical
-from tensorflow.keras.models import Model, Sequential
-from tensorflow.keras.optimizers import Adam
-from keras_nlp.layers import TransformerEncoder, TransformerDecoder
+from tensorflow.keras.layers import CategoryEncoding
+from tensorflow.keras.utils import timeseries_dataset_from_array
+import pypianoroll as ppr
 
-
-import calendar
-
-import time
-import shutil
-from sklearn.model_selection import train_test_split
 
 INSTRUMENTS = 1
 PITCHES = 129
 TIME_VOCAB = ['d1', 'd8', 'd16', 'd24', 'd32']
 
-import shutil
+
 
 def _group_subdirs_contents(from_dir=None, to_dir=None):
-   
+    """
+    Groups contents of subdirectories into the main directory.
+
+    Args:
+        from_dir (str): Source directory containing subdirectories.
+        to_dir (str): Destination directory to move files to.
+
+    Returns:
+        str: Destination directory path.
+    """
 
     global TOTAL_TRACKS_COUNT
 
@@ -48,42 +49,72 @@ def _group_subdirs_contents(from_dir=None, to_dir=None):
     print("Total Tracks: ", TOTAL_TRACKS_COUNT)
     return to_dir
 
+
 def resample(empties_boolean, prune_percent=0.7):
-    resampled_inclusion_beats = [ ]
+    """
+    Resamples empty beats based on a pruning percentage.
+
+    Args:
+        empties_boolean (list): List of boolean values indicating empty beats.
+        prune_percent (float): Percentage of empty beats to prune.
+
+    Returns:
+        list: Resampled inclusion beats.
+    """
+
+    resampled_inclusion_beats = []
 
     for isempty in empties_boolean:
         include = True
         if isempty :
-            if random() < prune_percent:  #70% pruning of empty beats
+            if random() < prune_percent:  # 70% pruning of empty beats
                 include = False
     
-        resampled_inclusion_beats += [include]
+        resampled_inclusion_beats.append(include)
 
     return resampled_inclusion_beats
 
+
 def decimal_multiples(num, base=8, max_mul=len(TIME_VOCAB)-1):
-    mul_count = {base*k : 0 for k in range(1, max_mul+1)}
-    mul_count.update({1:0})
+    """
+    Calculates decimal multiples of a number.
+
+    Args:
+        num (int): Number to calculate multiples for.
+        base (int): Base for multiples.
+        max_mul (int): Maximum multiplier.
+
+    Returns:
+        dict: Dictionary containing multiples of the number.
+    """
+    
+    mul_count = {base * k: 0 for k in range(1, max_mul + 1)}
+    mul_count.update({1: 0})
     
     while num:
         if max_mul == 0:
             div = 1
         else:
-            div = (max_mul*base)
+            div = (max_mul * base)
 
         
-        mul_count[div] = num//div
+        mul_count[div] = num // div
             
-        num = num%(div)
+        num = num % (div)
         max_mul -= 1
     return mul_count
 
-
-
 def tokenize_time(pitch_tokenized_track, time_vocab=TIME_VOCAB): #'d8'-1bt, 'd16'-2bt, 'd24'-3bt, 'd32'-4bt
+    """
+    Convert sequences of pitch IDs with redundancy due to finer time step repetitions into tokenized streams with special time tokens.
 
-    #a a a b b c c c  - a{3}   b{2}     c{3}
-    #d d d d d d d d  - d{4}   <stop>   <stop>
+    Args:
+        pitch_tokenized_track (np.ndarray): Pitch-tokenized track.
+        time_vocab (list): Vocabulary for time representation.
+
+    Returns:
+        np.ndarray: Time-tokenized track.
+    """
 
     stop_token_id = PITCHES + len(time_vocab)
     instruments_rep = []
@@ -99,32 +130,45 @@ def tokenize_time(pitch_tokenized_track, time_vocab=TIME_VOCAB): #'d8'-1bt, 'd16
             curr = time_roll[start]
             if curr != prev:
                 instrument_rep += [prev]
-                mul_count = decimal_multiples(count-count%8, 8, max_mul=len(time_vocab)-1)
+                mul_count = decimal_multiples(count - count % 8, 8, max_mul=len(time_vocab) - 1)
                 for time_token_num, token_count in mul_count.items():
-                    token_id = time_token_num//8 + PITCHES 
-                    instrument_rep += [token_id]*token_count
+                    token_id = time_token_num // 8 + PITCHES 
+                    instrument_rep += [token_id] * token_count
                 prev = curr 
                 count = 0
             count += 1
             start += 1
         instrument_rep += [prev]
-        mul_count = decimal_multiples(count-count%8, 8, max_mul=len(time_vocab)-1)
+        mul_count = decimal_multiples(count - count % 8, 8, max_mul=len(time_vocab) - 1)
         for time_token_num, token_count in mul_count.items():
-            token_id = time_token_num//8 + PITCHES 
-            instrument_rep += [token_id]*token_count
+            token_id = time_token_num // 8 + PITCHES 
+            instrument_rep += [token_id] * token_count
         
         if len(instrument_rep) >= max_len:
             max_len = len(instrument_rep)
 
         instruments_rep += [instrument_rep]
-    
+
     time_tokenized_track = np.full((max_len, pitch_tokenized_track.shape[1]), stop_token_id)
     for rollid, roll in enumerate(instruments_rep):
         time_tokenized_track[:len(roll), rollid] = roll 
-    
+
     return time_tokenized_track
 
+
+
 def detokenize_time(time_tokenized_track, time_vocab=TIME_VOCAB, cutoff_len=None):
+    """
+    Detokenize sequences of time-tokenized tracks to return them to the pitch tokenization domain.
+
+    Args:
+        time_tokenized_track (np.ndarray): Time-tokenized track.
+        time_vocab (list): Vocabulary for time representation.
+        cutoff_len (int): Cutoff length for detokenization.
+
+    Returns:
+        np.ndarray: Detokenized pitch-tokenized track.
+    """
 
     stop_token_id = PITCHES + len(time_vocab)
     instruments_rep = []
@@ -132,22 +176,22 @@ def detokenize_time(time_tokenized_track, time_vocab=TIME_VOCAB, cutoff_len=None
     for instrument in range(time_tokenized_track.shape[1]):
         time_roll = time_tokenized_track[:, instrument]
         prev = time_roll[0]
-        prev = prev if prev in range(PITCHES) else 0   #default start token
+        prev = prev if prev in range(PITCHES) else 0   # Default start token
         start = 1
         count = 1
         instrument_rep = []
-        while start <time_roll.shape[0]:
+        while start < time_roll.shape[0]:
             curr = time_roll[start]
             if curr in range(PITCHES, stop_token_id):
-                count += int(time_vocab[curr-PITCHES].replace('d', ''))    
+                count += int(time_vocab[curr - PITCHES].replace('d', ''))    
             else:
-                instrument_rep += [prev]*count 
+                instrument_rep += [prev] * count 
                 prev = curr
                 count = 1
 
-                if not(cutoff_len) and curr == stop_token_id:
+                if not (cutoff_len) and curr == stop_token_id:
                     break
-                elif curr==stop_token_id:
+                elif curr == stop_token_id:
                     instrument_rep += [prev]
                 else:
                     pass 
@@ -156,7 +200,7 @@ def detokenize_time(time_tokenized_track, time_vocab=TIME_VOCAB, cutoff_len=None
             start += 1
         
         if curr != stop_token_id:
-            instrument_rep += [prev]*count 
+            instrument_rep += [prev] * count 
 
         if cutoff_len:
             instrument_rep = instrument_rep[:cutoff_len]
@@ -164,9 +208,20 @@ def detokenize_time(time_tokenized_track, time_vocab=TIME_VOCAB, cutoff_len=None
         instruments_rep += [instrument_rep]
 
     return np.array(instruments_rep).T
-        
+
 
 def store_batched_dataset(dataset, dataset_name, dataset_type='train'):
+    """
+    Stores batched datasets as .npy files for batchwise loading during training. 
+    Each dataset is identified by the dataset name, which contains the name of the original directory 
+    from which the MIDI tracks are extracted, followed by the track ID in the original directory and 
+    the batch number associated with that track.
+    
+    Args:
+    - dataset (iterable): Iterable containing batches of input-output pairs.
+    - dataset_name (str): Name of the dataset.
+    - dataset_type (str): Type of the dataset ('train', 'val', or 'test'). Defaults to 'train'.
+    """
 
     for batch_id, batch in enumerate(dataset):
         inputs, outputs = batch 
@@ -177,6 +232,21 @@ def store_batched_dataset(dataset, dataset_name, dataset_type='train'):
             print(E)
 
 def make_dataset(track, resolution, batch_size, prune_rest_note_percent, encoder_decoder, input_sequence_len, output_sequence_len):
+    """
+    Takes a track, resolution as input, parses the track to contain note and chord information, 
+    and then makes sequences from them packed by batch size using the arguments given and returns a dataset object.
+    
+    Args:
+    - track (obj): Track object containing MIDI data.
+    - resolution (int): Resolution of the MIDI data.
+    - batch_size (int): Size of each batch.
+    - encoder_decoder (bool): Flag indicating whether the architecture is encoder-decoder.
+    - input_sequence_len (int): Length of input sequences.
+    - output_sequence_len (int): Length of output sequences.
+
+    Returns:
+    - iterable: Dataset containing input-output pairs.
+    """
     
     track = track.binarize().set_resolution(resolution).stack()
             
@@ -231,6 +301,26 @@ def make_dataset(track, resolution, batch_size, prune_rest_note_percent, encoder
 
 def sample_dataset(dir, nsamples, train_size=0.8, val_size=0.2, input_sequence_len=2400, output_sequence_len=None, resolution=24, prune_rest_note_percent=0.3, batch_size=64, encoder_decoder=False):
 
+    """
+    Takes the main directory containing MIDI tracks, and the number of samples from the original directory to use for 
+    creating train, validation, and test datasets, following the given input and output sequence length for the 
+    encoder-decoder architecture of a model. Creates the datasets and places them in the train, val, and test 
+    directories and returns them.
+
+    Args:
+    - dir (str): Main directory containing MIDI tracks.
+    - nsamples (int): Number of samples from the original directory to use.
+    - train_size (float): Proportion of samples to use for training. Defaults to 0.8.
+    - val_size (float): Proportion of samples to use for validation. Defaults to 0.2.
+    - input_sequence_len (int): Length of input sequences.
+    - output_sequence_len (int): Length of output sequences.
+    - resolution (int): Resolution of the MIDI data. Defaults to 24.
+    - batch_size (int): Size of each batch. Defaults to 64.
+    - encoder_decoder (bool): Flag indicating whether the architecture is encoder-decoder. Defaults to False.
+
+    Returns:
+    - tuple: Tuple containing paths to train, val, and test directories.
+    """
 
     samples = os.listdir(dir)[:nsamples]
 
@@ -288,6 +378,21 @@ def sample_dataset(dir, nsamples, train_size=0.8, val_size=0.2, input_sequence_l
 
 
 def sample_track(dir, nsamples, input_sequence_len, resolution):
+
+    """
+    Creates a set of input-output tuples of sequences following the input sequence length and resolution 
+    for tracks taken from the directory, sampling a total of nsamples.
+    
+    Args:
+    - dir (str): Directory containing MIDI tracks.
+    - nsamples (int): Number of samples to take.
+    - input_sequence_len (int): Length of input sequences.
+    - resolution (int): Resolution of the MIDI data.
+    
+    Returns:
+    - list: List of tuples containing input-output sequences.
+    """
+
     samples = np.array(os.listdir(dir))
     track_ids = np.random.choice(len(samples), replace=False, size=(nsamples,))
     samples = samples[track_ids]
@@ -323,6 +428,19 @@ def sample_track(dir, nsamples, input_sequence_len, resolution):
 format_targets = lambda y: tf.unstack(tf.experimental.numpy.moveaxis(y, (0, 1, 2), (1, 2, 0)))[0] if INSTRUMENTS == 1 else tuple(tf.unstack(tf.experimental.numpy.moveaxis(y, (0, 1, 2), (1, 2, 0))))
 
 def load_music_batches(input_dir, output_dir, encoder_decoder=True):
+
+    """
+    Loads MIDI files batchwise for encoder-decoder processing.
+
+    Inputs:
+        input_dir (str): Directory containing input MIDI batches.
+        output_dir (str): Directory containing output MIDI batches.
+        encoder_decoder (bool): Flag indicating whether the data is for encoder-decoder processing (default is True).
+
+    Yields:
+        Tuple: Input and target data batches formatted for model training.
+    """
+
 
     while 1:
         for inp_batch, output_batch in zip(os.listdir(input_dir), os.listdir(output_dir)):
@@ -365,6 +483,17 @@ from random import random, randint
 
 
 def top_p_sampling(probabilities, p):
+    """
+    Selects samples from a probability distribution such that the cumulative probability of the selected samples is less than or equal to a threshold p.
+
+    Inputs:
+        probabilities (numpy.ndarray): Probability distribution.
+        p (float): Threshold probability.
+
+    Returns:
+        numpy.ndarray: Indices of selected samples.
+    """
+
     sorted_indices = np.argsort(probabilities)[::-1]  # Sort probabilities in descending order
     cumulative_probs = np.cumsum(probabilities[sorted_indices])  # Compute cumulative probabilities
     if np.any(cumulative_probs <= p):
@@ -379,6 +508,21 @@ def top_p_sampling(probabilities, p):
 
 def compose_music(music_model, cue=None, topn=6, top_p=None, print_gen=False, encoder_decoder=False, slide_cue_after=100):  #cue-shape : (cue_len, 5)
     
+    """
+    Generates a musical composition represented as sequences of vocab ids sampled from the model predictions.
+
+    Inputs:
+        music_model (callable): Model used for music generation.
+        cue (numpy.ndarray): Cue for music generation (default is None).
+        topn (int): Number of top predictions to consider (default is 6).
+        top_p (float): Threshold probability for top-p sampling (default is None).
+        print_gen (bool): Flag to print generation information (default is False).
+        encoder_decoder (bool): Flag indicating whether the model follows an encoder-decoder architecture (default is False).
+        slide_cue_after (int): Number of steps after which to slide the cue (default is 100).
+
+    Yields:
+        numpy.ndarray: Musical composition represented as sequences of vocab ids.
+    """
 
     
     #cue = np.concatenate([np.zeros(cue.shape[:-1] + (1,)), cue], axis=-1)
@@ -454,6 +598,17 @@ def compose_music(music_model, cue=None, topn=6, top_p=None, print_gen=False, en
     
 
 def get_avg_tempo(dir='lpd_5/lpd_5_full/0', topn=1000):
+    """
+    Computes the average tempo of MIDI files in the specified directory.
+
+    Inputs:
+        dir (str): Directory containing MIDI files (default is 'lpd_5/lpd_5_full/0').
+        topn (int): Number of MIDI files to consider for calculating average tempo (default is 1000).
+
+    Returns:
+        float: Average tempo.
+    """
+
     samples = os.listdir(dir)[:topn]
     tempo = 0.
     count = 0
