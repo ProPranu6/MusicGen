@@ -52,11 +52,11 @@ def attach_chords_vocab(sampled_chords, pitch_vocab):
     """
 
     sampled_chords = list(set(sampled_chords))
-    v_card = len(pitch_vocab) + len(sampled_chords)
-    all_chords = defaultdict(lambda : v_card - 1)
+    v_card = len(pitch_vocab) + len(sampled_chords) + 1
+    all_chords = defaultdict(lambda : v_card)
 
     # Assign IDs to sampled chords
-    for chord_number in range(len(pitch_vocab), v_card - 1):
+    for chord_number in range(len(pitch_vocab), v_card-1):
         all_chords[sampled_chords[chord_number - len(pitch_vocab)]] = chord_number
 
     # Include pitch vocabulary and assign 'R' (rest note) the last ID
