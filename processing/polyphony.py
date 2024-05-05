@@ -1,5 +1,5 @@
 import numpy as np
-from music21 import stream, note, chord, tempo, pitch
+
 from collections import defaultdict
 import pypianoroll as ppr 
 import matplotlib.pyplot as plt
@@ -9,52 +9,61 @@ import os
 from random import random
 from tqdm import tqdm
 import tensorflow as tf
-from tensorflow.keras.layers import Dense, LSTM, Flatten, Input, Bidirectional, TimeDistributed, Activation, Concatenate, Embedding, MaxPooling1D, CategoryEncoding, Conv1D, Dropout, AveragePooling1D
-from tensorflow.keras.utils import pad_sequences, timeseries_dataset_from_array, split_dataset, to_categorical
-from tensorflow.keras.models import Model, Sequential
-from tensorflow.keras.optimizers import Adam
-from keras_nlp.layers import TransformerEncoder, TransformerDecoder
-
-
-import calendar
-
-import time
+from tensorflow.keras.utils import timeseries_dataset_from_array
 import shutil
 from sklearn.model_selection import train_test_split
+from music21 import stream, note, midi, instrument as INS, converter, chord, pitch
 
 INSTRUMENTS = 1
+MAX_CHORD_LIMIT = 2000
 
-def get_pitch_vocab(oov_num=128):
+def get_pitch_vocab(vcard=128):
+    """
+    returns dictionary of 128 vcard argument (vocab cardinality) indicating pitches from 0-127 following midi format
+    """
     # Create a list to store all pitches corresponding to MIDI note numbers
-    all_pitches = defaultdict(lambda : oov_num)
+    all_pitches = {}
 
     # Iterate through MIDI note numbers (0 to 127) and create corresponding pitches
-    for note_number in range(oov_num):
+    for note_number in range(vcard-1):
         p = pitch.Pitch()
         p.midi = note_number
         all_pitches[str(p)] = note_number #.append(str(p))
-    
+
+    #all_pitches['R'] = note_number  #rest note is part of the vocabulary
     return all_pitches
 
 def attach_chords_vocab(sampled_chords, pitch_vocab):
+    """
+    returns dictionary representing music vocabulary where ids from 0-127 indicate pitches of notes and all sampled chords from training set are alloted ids after that.
+    takes as input sampled chords and created pitch_vocab. Unknown pitches or chords are considered 'R' (rest note) which has last id
+
+    """
     sampled_chords = list(set(sampled_chords))
-    oov_num = pitch_vocab['last'] + len(sampled_chords)
-    all_chords = defaultdict(lambda : oov_num)
+    v_card = len(pitch_vocab) + len(sampled_chords)
+    all_chords = defaultdict(lambda : v_card-1)
 
 
     # Iterate through MIDI note numbers (0 to 127) and create corresponding pitches
-    for chord_number in range(pitch_vocab["last"], oov_num):
+    for chord_number in range(len(pitch_vocab), v_card-1):
         all_chords[sampled_chords[chord_number-pitch_vocab['last']]] = chord_number #.append(str(p))
 
     all_chords.update(pitch_vocab)
+    all_chords['R'] = chord_number # set's R with v_card -1 
     del all_chords['last']
     return all_chords
 
 
 def pitch_to_vocab_id(pitches, vocab):
+    """
+    returns pitches converted to ids according to the vocab given in argument
+    """
     return np.vectorize(lambda x: vocab[x])(pitches)
 
 def reverse_vocab(vocab):
+    """
+    returns reverse mapping of vocab from id-> pitches
+    """
     last_id = vocab['last']
     del vocab['last']
     rvocab = {v:k for k,v in vocab.items()}
@@ -63,10 +72,16 @@ def reverse_vocab(vocab):
 
 
 def vocab_id_to_pitch(vocab_ids, rvocab):
+    """
+    returns sequences of pitches converted from vocab id sequences using reverse vocab rvocab mapping
+    """
     return np.vectorize(lambda x: rvocab[x])(vocab_ids)
 
 
 def store_batched_dataset(dataset, dataset_name, dataset_type='train'):
+    """
+    stores batched datasets as .npy files for batchwise loading during training. takes dataset name which contains the name of original directory from which the midi tracks are extracted, followed by track id in the original directory and batch number associated with that track
+    """
 
     for batch_id, batch in enumerate(dataset):
         inputs, outputs = batch 
@@ -78,12 +93,18 @@ def store_batched_dataset(dataset, dataset_name, dataset_type='train'):
 
 
 
-def make_dataset(track, resolution, batch_size, prune_rest_note_percent, encoder_decoder, input_sequence_len, output_sequence_len):
-    
+def make_dataset(track, resolution, batch_size, encoder_decoder, input_sequence_len, output_sequence_len):
+    """
+    takes a track, resolution as input, parses the track to contain note and chord information and then makes sequences from them packed by batch size using the arguments given and returns a dataset object
+    """
     # Argmax results, one pitch at a time step for an instrument, ignores chords
-    track = np.expand_dims(parse_track(track, resolution), axis=-1)
+    
 
     try:
+        # Parse track to get note and chord info
+        track = parse_track(track, resolution).T
+      
+
         if encoder_decoder:
             input_track = track[:-output_sequence_len]
             output_track = track[input_sequence_len:]
@@ -97,16 +118,16 @@ def make_dataset(track, resolution, batch_size, prune_rest_note_percent, encoder
 
         
         dataset = zip(input_dataset, output_dataset)
-            
+   
     except Exception as E:
         dataset = None
-        pass
-    
     return dataset 
 
 
 def sample_dataset(dir, nsamples,  train_size=0.8, val_size=0.2, input_sequence_len=2400, output_sequence_len=None, resolution=24, prune_rest_note_percent=0.3, batch_size=64, encoder_decoder=False):
-
+    """
+    
+    """
     samples = os.listdir(dir)[:nsamples]
 
     train_samples, test_samples = train_test_split(samples, train_size=train_size, shuffle=True)
@@ -145,6 +166,7 @@ def sample_dataset(dir, nsamples,  train_size=0.8, val_size=0.2, input_sequence_
     for dataset_type in ['train', 'val', 'test']:
         if dataset_type == 'train':
             samples = train_samples
+            learn_vocab(dir, samples, resolution)
         elif dataset_type == 'val':
             samples = val_samples
         elif dataset_type == 'test':
@@ -178,22 +200,57 @@ def sample_track(dir, nsamples, input_sequence_len, resolution):
         tracks += [(input_track, output_track)]
         
     return tracks
-
-def parse_track(track, resolution):
-
+def learn_vocab(dir, samples, resolution, max_chord_limit=MAX_CHORD_LIMIT):
     global vocab, rvocab
 
     chord_info = set()
-    parsed_track = []
-    
+    stop_learning = 0
+    for trackid in tqdm(range(len(samples)),desc=f'Learning train vocab...'):
+        track = ppr.load(os.path.join(dir, samples[trackid])).binarize().set_resolution(resolution).pad_to_same()
+        if INSTRUMENTS == 1:
+            track = ppr.Multitrack(tracks=track.tracks[1:2])
+        ppr.write('temp_save.mid', track)
+        # Load the MIDI file using music21
+        file = 'temp_save.mid'
+        midi = converter.parse(file)
+        parts = midi.parts#[1:2] if INSTRUMENTS == 1 else midi.parts
+        # Iterate over each track in the MIDI file
+        for part in parts:
+            # Traverse the MIDI elements and extract notes and chords
+            notes_to_parse = part.recurse()
+            for element in notes_to_parse:
+                if isinstance(element, chord.Chord):
+                    chordd = '.'.join(str(n) for n in element.pitches)
+                    chord_info.add(chordd)
+                    
+                    if len(chord_info) == max_chord_limit:
+                        stop_learning = 1
+                        print(f"Max chord limit : {MAX_CHORD_LIMIT} reached! Stopping Learning now")
+                        break
+            if stop_learning:
+                break
+        if stop_learning:
+            break
+
+                        
+
+    vocab = attach_chords_vocab(chord_info, get_pitch_vocab())
+    rvocab = reverse_vocab(vocab)
+    return
+
+def parse_track(track, resolution):
+
+    parsed_track = []    
     track = track.binarize().set_resolution(resolution).pad_to_same()
+    if INSTRUMENTS == 1:
+        track = ppr.Multitrack(tracks=track.tracks[1:2])
+    
     ppr.write('temp_save.mid', track)
 
     # Load the MIDI file using music21
     file = 'temp_save.mid'
     midi = converter.parse(file)
-    parts = midi.parts[1:2] if INSTRUMENTS == 1 else midi.parts
-
+    parts = midi.parts#[1:2] if INSTRUMENTS == 1 else midi.parts
 
     # Iterate over each track in the MIDI file
     for part in parts:
@@ -206,17 +263,14 @@ def parse_track(track, resolution):
                 instrument_track.append(str(element.pitch))
             elif isinstance(element, chord.Chord):
                 chordd = '.'.join(str(n) for n in element.pitches)
-                chord_info.add(chordd)
                 instrument_track.append(chordd)
             elif isinstance(element, note.Rest):
                 instrument_track.append('R')
 
         parsed_track.append(instrument_track)
 
-
-    vocab = attach_chords_vocab(chord_info, get_pitch_vocab())
-    rvocab = reverse_vocab(vocab)
     return pitch_to_vocab_id(parsed_track, vocab)
+   
 
 
 format_targets = lambda y: tf.unstack(tf.experimental.numpy.moveaxis(y, (0, 1, 2), (1, 2, 0)))[0] if INSTRUMENTS == 1 else tuple(tf.unstack(tf.experimental.numpy.moveaxis(y, (0, 1, 2), (1, 2, 0))))
@@ -336,11 +390,7 @@ def get_avg_tempo(dir='lpd_5/lpd_5_full/0', topn=1000):
             count += data['tempo'].shape[0]
     return tempo/count
 
-import numpy as np
 
-from music21 import stream, note, midi
-
-from music21 import stream, note, instrument
 
 def pitches_to_midi(pitches_list, instrument_names, resolution, output_file='output.mid'):
     # Create a Score object to hold all instruments
@@ -349,7 +399,7 @@ def pitches_to_midi(pitches_list, instrument_names, resolution, output_file='out
     # Create a Part object for each instrument
     for i, (pitches, instr_name) in enumerate(zip(pitches_list, instrument_names)):
         # Create an Instrument object for the instrument
-        instr = instrument.Instrument()
+        instr = INS.Instrument()
         instr.partName = instr_name  # Set instrument name
         # Optionally, you can set other attributes such as instrument family, MIDI program number, etc.
         # For example:

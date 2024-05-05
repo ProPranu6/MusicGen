@@ -21,6 +21,33 @@ INSTRUMENTS = 1
 PITCHES = 129
 TIME_VOCAB = ['d1', 'd8', 'd16', 'd24', 'd32']
 
+import shutil
+
+def _group_subdirs_contents(from_dir=None, to_dir=None):
+   
+
+    global TOTAL_TRACKS_COUNT
+
+    # Get a list of all subdirectories
+    subdirs = os.listdir(from_dir)
+    
+    TOTAL_TRACKS_COUNT = 0
+    # Iterate over the subdirectories
+    for subdir in subdirs:
+
+        # Get a list of all files in the subdirectory
+        if os.path.isdir(os.path.join(from_dir, subdir)):
+            files = os.listdir(os.path.join(from_dir, subdir))
+
+            # Iterate over the files
+            for file in files:
+                # Move the file to the main directory
+                shutil.move(os.path.join(from_dir, subdir, file), to_dir)
+                TOTAL_TRACKS_COUNT += 1
+
+    print("Total Tracks: ", TOTAL_TRACKS_COUNT)
+    return to_dir
+
 def resample(empties_boolean, prune_percent=0.7):
     resampled_inclusion_beats = [ ]
 
@@ -202,7 +229,8 @@ def make_dataset(track, resolution, batch_size, prune_rest_note_percent, encoder
     
     return dataset 
 
-def sample_dataset(dir, nsamples,  train_size=0.8, val_size=0.2, input_sequence_len=2400, output_sequence_len=None, resolution=24, prune_rest_note_percent=0.3, batch_size=64, encoder_decoder=False):
+def sample_dataset(dir, nsamples, train_size=0.8, val_size=0.2, input_sequence_len=2400, output_sequence_len=None, resolution=24, prune_rest_note_percent=0.3, batch_size=64, encoder_decoder=False):
+
 
     samples = os.listdir(dir)[:nsamples]
 
@@ -281,6 +309,9 @@ def sample_track(dir, nsamples, input_sequence_len, resolution):
         # Argmax results, one pitch at a time step for an instrument, ignores chords
         track = track.argmax(axis=-1)
 
+        #if tokenize_tracks:
+        #    track = tokenize_time(track)
+
         input_track = track[:input_sequence_len]
         output_track = track[input_sequence_len:]
 
@@ -355,7 +386,10 @@ def compose_music(music_model, cue=None, topn=6, top_p=None, print_gen=False, en
     # Argmax results, one pitch at a time step for an instrument, ignores chords
     #cue = cue.argmax(axis=-1) #(800, 5)
 
-    cue = np.expand_dims(tokenize_time(cue), axis=0)
+    #if not cue_tokenized :
+    #    cue = tokenize_time(cue)
+
+    cue = np.expand_dims(cue, axis=0)
 
     composition = [cue[:, -1]]      #List[(1, 5,)]
     gen = 1
@@ -373,8 +407,12 @@ def compose_music(music_model, cue=None, topn=6, top_p=None, print_gen=False, en
             start_pcomp += slide_cue_after-1
             cue = np.expand_dims(composition_arr[-cue.shape[1]:], axis=0)
             pcomp = pcomp[:, -2:-1, :]
-            
+        
+        
         pcomp = np.expand_dims(composition_arr[start_pcomp:start_pcomp+slide_cue_after],axis=0)
+        
+        #if output_seq_len:
+        #    pcomp = np.concatenate([pcomp, np.zeros((pcomp.shape[0], max(0, output_seq_len - pcomp.shape[1]), pcomp.shape[2]))], axis=1) 
 
       
         if encoder_decoder:
@@ -427,7 +465,7 @@ def get_avg_tempo(dir='lpd_5/lpd_5_full/0', topn=1000):
 
 import numpy as np
 
-def make_track(composition, tempo=120, from_model=True):
+def make_track(composition, tempo=120, composition_tokenized=True):
 
 
     tracks = []
@@ -439,7 +477,7 @@ def make_track(composition, tempo=120, from_model=True):
         track_data = {0:track_data[1]}
         
     
-    if from_model:
+    if composition_tokenized:
         composition = detokenize_time(composition, cutoff_len=composition.shape[0])  #time_tokenized_track length
  
 
