@@ -78,7 +78,7 @@ def recurrent(pitches=PITCHES, instruments=INSTRUMENTS, time_vocabs=len(TIME_VOC
     return model
 
 
-def transformer_encoder_decoder(music_dim=PITCHES+len(TIME_VOCAB), instruments=INSTRUMENTS):
+def transformer_encoder_decoder(music_dim=PITCHES+len(TIME_VOCAB), instruments=INSTRUMENTS, ignore_last_class=True):
 
     """
     (Multi-instrument-nochord) -> (Embedding of size 100) -> (Contextual Average embedding) -> (Encoder-Decoder Transformer) -> (Multi-instrument softmax outputs)
@@ -106,7 +106,7 @@ def transformer_encoder_decoder(music_dim=PITCHES+len(TIME_VOCAB), instruments=I
         Out += [TimeDistributed(Dense(music_dim), name=f'instrument_{instrument+1}')(Y)]
     
 
-    losses = [tf.keras.losses.SparseCategoricalCrossentropy(ignore_class=music_dim-1, from_logits=True)]*instruments
+    losses = [tf.keras.losses.SparseCategoricalCrossentropy(ignore_class=music_dim-1 if ignore_last_class else music_dim+10, from_logits=True)]*instruments
     if instruments == 1:
         Out = Out[0]
         losses = losses[0]
