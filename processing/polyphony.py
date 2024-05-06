@@ -92,7 +92,8 @@ def reverse_vocab(vocab):
 
     last_id = vocab['last']
     del vocab['last']
-    rvocab = {v: k for k, v in vocab.items()}
+    rvocab = defaultdict(lambda : 'R')
+    rvocab.update({v: k for k, v in vocab.items()})
     rvocab.update({last_id: 'R'})
     return rvocab
 
@@ -478,7 +479,7 @@ def compose_music(music_model, cue=None, topn=6, top_p=None, print_gen=False, en
                 probs[exclude_pred] = 0.
                 new_probs = probs
             new_probs = new_probs / np.sum(new_probs)
-            preds += [np.random.choice(vocab['last'], (1,), p=new_probs)]
+            preds += [np.random.choice(vocab['last']+1, (1,), p=new_probs)]
         preds = np.array(preds)
         currcomp = preds.T
         composition += [currcomp]
@@ -521,7 +522,19 @@ def pitches_to_midi(pitches_list, instrument_names, resolution, output_file='out
         stream_obj = stream.Part()
         stream_obj.append(instr)
         for pitch in pitches:
-            n = note.Note(pitch)
+            pitch = pitch.split(".")
+            if len(pitch) == 1:
+                pitch = pitch[0]
+                if pitch == 'R':
+                    n = note.Rest()
+                else:
+                    try:
+                        n = note.Note(pitch)
+                    except:
+                        n = note.Note(pitch[0])
+            else:
+                c = [note.Note(p) for p in pitch]
+                n = chord.Chord(c)
             stream_obj.append(n)
         score.insert(i, stream_obj)
     score.write('midi', fp=output_file, midiScale=resolution)
@@ -562,6 +575,16 @@ def make_midi(composition, tempo=120, resolution=8, output_file=None):
     return output_file
 
 
+import subprocess
+
+def midi_to_wav(midi_path, output_wav_path):
+    try:
+        # Run Timidity++ command to convert MIDI to WAV
+        subprocess.run(["timidity", midi_path, "-Ow", "-o", output_wav_path], check=True)
+        print("Conversion completed successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error: {e}")
+        print("Conversion failed.")
 
 
 
