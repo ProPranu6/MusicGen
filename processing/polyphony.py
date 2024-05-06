@@ -263,19 +263,24 @@ def sample_track(dir, nsamples, input_sequence_len, resolution):
     Returns:
     - list: List of tuples containing input-output sequences.
     """
+
     samples = np.array(os.listdir(dir))
     track_ids = np.random.choice(len(samples), replace=False, size=(nsamples,))
     samples = samples[track_ids]
 
     tracks = []
     for trackid in tqdm(range(0, nsamples, 1), desc='Sampling tracks...'):
-        track = ppr.load(os.path.join(dir, samples[trackid]))
-        track = np.expand_dims(parse_track(track, resolution), axis=-1)
+        try:
+            track = ppr.load(os.path.join(dir, samples[trackid]))
+            track = parse_track(track, resolution).T #instruments, time_steps
 
-        input_track = track[:input_sequence_len]
-        output_track = track[input_sequence_len:]
+            
+            input_track = track[:input_sequence_len]
+            output_track = track[input_sequence_len:]
 
-        tracks += [(input_track, output_track)]
+            tracks += [(input_track, output_track)]
+        except Exception as E:
+            pass 
         
     return tracks
 
@@ -296,7 +301,7 @@ def learn_vocab(dir, samples, resolution, max_chord_limit=MAX_CHORD_LIMIT):
     """
     global vocab, rvocab
 
-    chord_info = set()
+    chord_info = defaultdict(lambda : 0)
     stop_learning = 0
     for trackid in tqdm(range(len(samples)), desc=f'Learning train vocab...'):
         track = ppr.load(os.path.join(dir, samples[trackid])).binarize().set_resolution(resolution).pad_to_same()
@@ -314,17 +319,20 @@ def learn_vocab(dir, samples, resolution, max_chord_limit=MAX_CHORD_LIMIT):
             for element in notes_to_parse:
                 if isinstance(element, chord.Chord):
                     chordd = '.'.join(str(n.step) for n in element.pitches)
-                    chord_info.add(chordd)
+                    chord_info[chordd] += 1
                     
-                    if len(chord_info) == max_chord_limit:
-                        stop_learning = 1
-                        print(f"Max chord limit: {MAX_CHORD_LIMIT} reached! Stopping learning now")
-                        break
-            if stop_learning:
-                break
-        if stop_learning:
-            break
-
+                    #if len(chord_info) == max_chord_limit:
+                    #    stop_learning = 1
+                    #    print(f"Max chord limit: {MAX_CHORD_LIMIT} reached! Stopping learning now")
+                    #    break
+            #if stop_learning:
+            #    break
+        #if stop_learning:
+        #    break
+    
+    chord_info_sorted = sorted(list(chord_info.items()), key=lambda x: x[1], reverse=True)[:max_chord_limit]
+    chord_info = set([chord for chord, freq in chord_info_sorted])
+    
     vocab = attach_chords_vocab(chord_info, get_pitch_vocab())
     rvocab = reverse_vocab(vocab)
     return
