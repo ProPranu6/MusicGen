@@ -7,6 +7,7 @@ import tensorflow as tf
 from tensorflow.keras.layers import CategoryEncoding
 from tensorflow.keras.utils import timeseries_dataset_from_array
 import pypianoroll as ppr
+from sklearn.model_selection import train_test_split
 
 
 INSTRUMENTS = 1
