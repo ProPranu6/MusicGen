@@ -8,6 +8,8 @@ dataset_info : The following Drive Link contains the Lakh Pianoroll Dataset (LPD
 MusicGen-Datasets [uploads onto drive in process]: https://drive.google.com/drive/folders/1zI3TlrzxGUndemSmiagPtTUAmJ23MOR2?usp=sharing
 
 [(MusicGen-Presentation Deck)](https://github.com/ProPranu6/MusicGen/blob/spotlight/ML%20Project%20Initial%20Check-in%20Presentation.pdf)
+
+
 [(MusicGen-Paper)](https://www.overleaf.com/read/mbrnzybhqxfd#df6fb8)
 
 This repository contains scripts and interactive notebooks for generating music melodies using two major modules: `monophony.py` and `polyphony.py`. The `monophony.py` module generates chordless melodies, while the `polyphony.py` module generates melodies with chords included. Additionally, there are interactive notebooks (`music_gen_monophony.ipynb` and `music_gen_polyphony.ipynb`) for loading datasets, preprocessing data according to the paper's specifications, and experimenting with different models.
