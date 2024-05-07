@@ -588,7 +588,7 @@ def compose_music(music_model, cue=None, topn=6, top_p=None, print_gen=False, en
                 new_probs = probs
             
             new_probs = new_probs/np.sum(new_probs)
-            preds += [np.random.choice(PITCHES+len(TIME_VOCAB)+1, (1,), p=new_probs)]
+            preds += [np.random.choice(PITCHES+len(TIME_VOCAB), (1,), p=new_probs)]
 
         preds = np.array(preds)
         currcomp = preds.T #(1, 5)
